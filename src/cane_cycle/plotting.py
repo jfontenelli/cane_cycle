@@ -4,6 +4,7 @@ from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from cane_cycle.vegetation_indices import INDEX_GROUPS
 
@@ -36,6 +37,18 @@ SURFACE_COLORS = {
 
 # Colour of a clear observation when the smoothed curve carries the season.
 POINT_COLOR_CLEAR = "#6b6b6b"
+
+# One colour per phenological phase, running cold to warm in the order the
+# phases occur, so the cycle reads as a progression rather than as four
+# unrelated categories.
+PHASE_COLORS = {
+    "post_harvest": "#4a3aa7",
+    "sprouting": "#2a78d6",
+    "tillering": "#1baf7a",
+    "grand_growth": "#008300",
+    "maturation": "#eda100",
+}
+PHASE_UNCLASSIFIED_COLOR = "#b0b0b0"
 
 # Markers of the cycle boundaries on the curve.
 CYCLE_START_COLOR = "#000000"
@@ -405,6 +418,81 @@ def plot_smoothed_timeseries(
     ax_slope.tick_params(axis="x", labelrotation=90, labelsize=8)
 
     fig.tight_layout()
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=FIGURE_DPI)
+    return fig
+
+
+def plot_phenology_timeseries(df, curve, index, field_id, save_path=None):
+    """Plot the smoothed curve with every day coloured by phenological phase.
+
+    The colours run cold to warm in the order the phases occur, so the cycle
+    reads left to right as a progression. A cycle the phases could not be
+    read from - a field in renewal has no crop to have phenology - is drawn
+    in grey.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Observations, for the points behind the curve.
+    curve : pandas.DataFrame
+        Daily curve with a `phase` column, from
+        `cane_cycle.phenology.add_phenology`.
+    index : str
+        Index that was smoothed, e.g. "NDVI".
+    field_id : int
+        Field to plot.
+    save_path : str or Path, optional
+        If given, the figure is saved to this file.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    points = df[df["field_id"] == field_id]
+    line = curve[curve["field_id"] == field_id].sort_values("date").reset_index(drop=True)
+    if line.empty:
+        raise ValueError(f"No smoothed curve for field_id {field_id}")
+
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+    clear = points[points["surface"] != "cloud"]
+    ax.scatter(clear["date"], clear[index], color="#c9c9c9", s=10, zorder=2)
+
+    # One segment per run of the same phase, each carrying the first day of
+    # the next run so the curve never breaks between colours.
+    column = f"{index}_smooth"
+    run = (line["phase"] != line["phase"].shift()).cumsum()
+    for _, segment in line.groupby(run):
+        phase = segment["phase"].iloc[0]
+        # Carry the first day of the next run so the colours meet with no gap.
+        after = segment.index[-1] + 1
+        drawn = pd.concat([segment, line.iloc[after : after + 1]])
+        ax.plot(
+            drawn["date"], drawn[column],
+            color=PHASE_COLORS.get(phase, PHASE_UNCLASSIFIED_COLOR),
+            linewidth=2, zorder=3, solid_capstyle="round",
+        )
+
+    for phase, color in PHASE_COLORS.items():
+        ax.plot([], [], color=color, linewidth=2, label=phase)
+    if line["phase"].isna().any():
+        ax.plot([], [], color=PHASE_UNCLASSIFIED_COLOR, linewidth=2, label="unclassified")
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
+    ax.tick_params(axis="x", labelrotation=90, labelsize=8)
+    ax.set_xlabel("Date")
+    ax.set_ylabel(index)
+    ax.set_title(f"Phenological phases | field_id: {field_id} | {index}")
+    ax.grid(True, color="#eeeeee", linewidth=0.6)
+    ax.set_axisbelow(True)
+
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False, fontsize=8)
+    fig.tight_layout(rect=(0, 0.09, 1, 1))
+
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
