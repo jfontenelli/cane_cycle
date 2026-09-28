@@ -39,8 +39,15 @@ import pandas as pd
 
 from cane_cycle.vegetation_indices import add_indices
 
-# Observations with B1 (coastal aerosol) above this are treated as cloud.
+# Cloud is bright AND wet. Brightness alone is not enough: fresh straw is
+# bright too, and in these fields it reaches B1 = 0.103, above the 0.087 of
+# the spectral library, so a brightness-only filter throws away the very
+# images that show a cut. NDMI separates them without ambiguity: every cloud
+# sample of the library is positive (+0.047 to +0.324) and every straw sample
+# is negative (-0.147 to -0.163), because cloud reflects more in the NIR than
+# in the SWIR and dry straw does the opposite.
 CLOUD_B1_MAX = 0.10
+CLOUD_NDMI_MIN = 0.0
 
 # NDVI at or below this means no live canopy (harvest candidate).
 HARVEST_NDVI_MAX = 0.30
@@ -67,13 +74,30 @@ def season_label(years):
     return years.astype(str) + "/" + (years + 1).astype(str).str[-2:]
 
 
-def filter_clouds(df, cloud_b1_max=CLOUD_B1_MAX):
+def filter_clouds(df, cloud_b1_max=CLOUD_B1_MAX, cloud_ndmi_min=CLOUD_NDMI_MIN):
     """Drop cloud contaminated observations. Always the first filter.
 
-    In the field spectral library cloud starts at B1 = 0.113 and no land
-    class exceeds 0.087.
+    An observation is cloud when it is both bright in B1 (coastal aerosol)
+    and wet in NDMI. Requiring both keeps fresh straw, which is bright but
+    dry, and which a brightness-only test would discard along with the cut it
+    records.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Table with B1 and NDMI columns.
+    cloud_b1_max : float, default CLOUD_B1_MAX
+        B1 above which an observation is bright enough to be cloud.
+    cloud_ndmi_min : float, default CLOUD_NDMI_MIN
+        NDMI above which a bright observation is wet enough to be cloud.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Only the cloud free observations.
     """
-    return df[df["B1"] <= cloud_b1_max].copy()
+    is_cloud = (df["B1"] > cloud_b1_max) & (df["NDMI"] > cloud_ndmi_min)
+    return df[~is_cloud].copy()
 
 
 def flag_harvest_conditions(df, ndvi_max=HARVEST_NDVI_MAX):
@@ -136,6 +160,7 @@ def detect_harvests(
     ndvi_max=HARVEST_NDVI_MAX,
     canopy_ndvi_min=CANOPY_NDVI_MIN,
     cloud_b1_max=CLOUD_B1_MAX,
+    cloud_ndmi_min=CLOUD_NDMI_MIN,
 ):
     """Detect the harvest date of every crop cycle.
 
@@ -154,7 +179,9 @@ def detect_harvests(
     canopy_ndvi_min : float, default CANOPY_NDVI_MIN
         NDVI the crop must reach before a harvest can be recorded.
     cloud_b1_max : float, default CLOUD_B1_MAX
-        B1 threshold above which an observation is discarded as cloud.
+        B1 above which an observation is bright enough to be cloud.
+    cloud_ndmi_min : float, default CLOUD_NDMI_MIN
+        NDMI above which a bright observation is wet enough to be cloud.
 
     Returns
     -------
@@ -163,11 +190,12 @@ def detect_harvests(
         falls in), `harvest_date`, `ndvi_at_harvest` and `cycle_peak_ndvi`,
         the highest NDVI the crop reached during that cycle.
     """
-    if "NDVI" not in df.columns:
-        df = add_indices(df, indices=["NDVI"])
+    missing = [i for i in ("NDVI", "NDMI") if i not in df.columns]
+    if missing:
+        df = add_indices(df, indices=missing)
 
     # Cloud always goes first.
-    df = filter_clouds(df, cloud_b1_max=cloud_b1_max)
+    df = filter_clouds(df, cloud_b1_max=cloud_b1_max, cloud_ndmi_min=cloud_ndmi_min)
     df = flag_harvest_conditions(df, ndvi_max=ndvi_max)
 
     harvests = []
