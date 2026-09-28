@@ -68,21 +68,58 @@ HARVEST_NDVI_MAX = 0.30
 # peaked at 0.452, so the threshold sits inside that gap.
 CANOPY_NDVI_MIN = 0.50
 
-# First month of the Centre-South crop year (April to March).
+# Day the crop year opens. The default is the Centre-South sugarcane season
+# (1 April to 31 March); Brazilian grains usually open on 1 September. The
+# module takes the opening day only and derives the closing one, so the two
+# can never contradict each other.
 SEASON_START_MONTH = 4
+SEASON_START_DAY = 1
 
 
-def season_year(dates, season_start_month=SEASON_START_MONTH):
-    """Return the crop year of each date: the year its season started.
+def season_of(dates, start_month=SEASON_START_MONTH, start_day=SEASON_START_DAY):
+    """Return the crop year each date falls in, e.g. "2022/23".
 
-    This only labels the result; cycles are separated by the canopy, not here.
+    A season opens on `start_day`/`start_month` and closes the day before the
+    next opening, so the twelve months are always covered exactly once.
+    A harvest on 2022-11-20 is season "2022/23" when the year opens in April,
+    and also "2022/23" when it opens in September.
+
+    Parameters
+    ----------
+    dates : pandas.Series of datetime64
+        Dates to label.
+    start_month, start_day : int
+        Opening day of the crop year. Choose them for the crop at hand; the
+        function itself knows nothing about which crop that is.
+
+    Returns
+    -------
+    pandas.Series of str
+        Labels of the form "2022/23".
+
+    Notes
+    -----
+    This only labels the result; crop cycles are separated by the canopy.
     """
-    return dates.dt.year.where(dates.dt.month >= season_start_month, dates.dt.year - 1)
-
-
-def season_label(years):
-    """Format crop years as the usual season label, e.g. 2021 -> "2021/22"."""
+    before_start = (dates.dt.month < start_month) | (
+        (dates.dt.month == start_month) & (dates.dt.day < start_day)
+    )
+    years = dates.dt.year.where(~before_start, dates.dt.year - 1)
     return years.astype(str) + "/" + (years + 1).astype(str).str[-2:]
+
+
+def season_bounds(season, start_month=SEASON_START_MONTH, start_day=SEASON_START_DAY):
+    """Return the first and last day of a season label, e.g. "2022/23".
+
+    Returns
+    -------
+    tuple of pandas.Timestamp
+        Opening day and closing day (the day before the next opening).
+    """
+    year = int(str(season).split("/")[0])
+    start = pd.Timestamp(year=year, month=start_month, day=start_day)
+    end = pd.Timestamp(year=year + 1, month=start_month, day=start_day)
+    return start, end - pd.Timedelta(days=1)
 
 
 def filter_clouds(df, cloud_b1_max=CLOUD_B1_MAX, cloud_ndmi_min=CLOUD_NDMI_MIN):
@@ -170,6 +207,8 @@ def detect_harvests(
     df,
     ndvi_max=HARVEST_NDVI_MAX,
     canopy_ndvi_min=CANOPY_NDVI_MIN,
+    start_month=SEASON_START_MONTH,
+    start_day=SEASON_START_DAY,
 ):
     """Detect the harvest date of every crop cycle.
 
@@ -189,6 +228,8 @@ def detect_harvests(
         NDVI at or below this marks a date with no live canopy.
     canopy_ndvi_min : float, default CANOPY_NDVI_MIN
         NDVI the crop must reach before a harvest can be recorded.
+    start_month, start_day : int
+        Opening day of the crop year, used only to label the season.
 
     Returns
     -------
@@ -208,11 +249,17 @@ def detect_harvests(
         harvests += _field_harvests(field_data, canopy_ndvi_min)
 
     harvests = pd.DataFrame(harvests)
-    harvests.insert(1, "season", season_label(season_year(harvests["harvest_date"])))
+    harvests.insert(
+        1,
+        "season",
+        season_of(harvests["harvest_date"], start_month, start_day),
+    )
     return harvests
 
 
-def build_seasons(df, harvests):
+def build_seasons(
+    df, harvests, start_month=SEASON_START_MONTH, start_day=SEASON_START_DAY
+):
     """Build the season (safra) intervals between consecutive harvests.
 
     The first and last cycles of the record are bounded by the start and the
@@ -224,6 +271,8 @@ def build_seasons(df, harvests):
         The observation table, used for the first and last date of each field.
     harvests : pandas.DataFrame
         Output of `detect_harvests`.
+    start_month, start_day : int
+        Opening day of the crop year, used only to label the season.
 
     Returns
     -------
@@ -261,7 +310,7 @@ def build_seasons(df, harvests):
     seasons["open_season"] = seasons["is_limit"] | seasons["start_is_limit"]
 
     # The season is named after the crop year in which it was harvested.
-    seasons["season"] = season_label(season_year(seasons["end_date"]))
+    seasons["season"] = season_of(seasons["end_date"], start_month, start_day)
 
     return seasons[
         [

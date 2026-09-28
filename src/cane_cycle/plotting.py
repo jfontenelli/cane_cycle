@@ -10,6 +10,24 @@ from cane_cycle.vegetation_indices import INDEX_GROUPS
 # Colors of the first and second index (fixed order).
 INDEX_COLORS = ["#2a78d6", "#eb6834"]
 
+# One hue per season, assigned in this fixed order. Seasons are contiguous in
+# time and each segment carries its own label, so colour is a redundant cue and
+# a ninth season may reuse the first hue without ambiguity.
+SEASON_COLORS = [
+    "#2a78d6",  # blue
+    "#eb6834",  # orange
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#e87ba4",  # magenta
+    "#008300",  # green
+    "#4a3aa7",  # violet
+    "#e34948",  # red
+]
+
+# Markers of the cycle boundaries on the curve.
+CYCLE_START_COLOR = "#000000"
+CYCLE_END_COLOR = "#e34948"
+
 # Y-axis label for each index group.
 GROUP_LABELS = {
     "vegetation": "Vegetation index",
@@ -112,6 +130,94 @@ def plot_index_timeseries(
         labels += l
     fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=FIGURE_DPI)
+    return fig
+
+
+def plot_seasons_timeseries(df, index, field_id, seasons, save_path=None):
+    """Plot one index per field, coloured by crop cycle.
+
+    Each cycle of `seasons` runs from one harvest to the next and gets its own
+    colour, so the whole record reads as a sequence of seasons. The boundaries
+    are marked on the curve: black opens a cycle, red closes it. Because one
+    cycle's end is the next one's start, only the first black marker stays
+    visible; the last red marker is the end of the record, not a harvest.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Table with `field_id`, `date` and the index column.
+    index : str
+        Name of the index to plot, e.g. "NDVI".
+    field_id : int
+        Field to plot.
+    seasons : pandas.DataFrame
+        Output of `cane_cycle.harvest.build_seasons`.
+    save_path : str or Path, optional
+        If given, the figure is saved to this file.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    if index not in df.columns:
+        raise ValueError(f"Index not computed yet: {index}. Run add_indices first.")
+
+    data = df[df["field_id"] == field_id].sort_values("date")
+    cycles = seasons[seasons["field_id"] == field_id].sort_values("start_date")
+    if data.empty or cycles.empty:
+        raise ValueError(f"No data or no season for field_id {field_id}")
+
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+
+    for position, cycle in enumerate(cycles.itertuples()):
+        color = SEASON_COLORS[position % len(SEASON_COLORS)]
+        # Both boundaries are included, so consecutive cycles share a point
+        # and the curve stays continuous across the colour change.
+        segment = data[
+            data["date"].between(cycle.start_date, cycle.end_date)
+        ]
+        ax.plot(
+            segment["date"],
+            segment[index],
+            color=color,
+            linewidth=1.5,
+            zorder=2,
+            label=f"Season {cycle.season}",
+        )
+        ax.scatter(
+            segment["date"], segment[index], color=color, s=12, alpha=0.5, zorder=3
+        )
+
+    opens = data[data["date"].isin(cycles["start_date"])]
+    closes = data[data["date"].isin(cycles["end_date"])]
+    ax.scatter(
+        opens["date"], opens[index], color=CYCLE_START_COLOR, s=45, zorder=5,
+        label="Cycle start",
+    )
+    ax.scatter(
+        closes["date"], closes[index], color=CYCLE_END_COLOR, s=45, zorder=6,
+        label="Cycle end (harvest)",
+    )
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
+    ax.tick_params(axis="x", labelrotation=90, labelsize=7)
+    ax.set_xlabel("Date")
+    ax.set_ylabel(index)
+    ax.grid(True, color="#eeeeee", linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.set_title(f"{index} | field_id: {field_id}")
+
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(
+        handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=8
+    )
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
 
     if save_path is not None:
         save_path = Path(save_path)
