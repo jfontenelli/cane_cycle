@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cane_cycle"
+version = "0.1.0"
+description = "Sentinel-2 time series analysis of sugarcane fields: harvest detection, crop cycles, phenology and climate."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "scipy",
+]
+
+[project.optional-dependencies]
+notebooks = ["jupyter", "ipykernel"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
