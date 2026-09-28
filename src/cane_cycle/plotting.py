@@ -24,6 +24,16 @@ SEASON_COLORS = [
     "#e34948",  # red
 ]
 
+# One colour per surface state. Violet replaces the intuitive brown for bare
+# soil: brown and green sit 3.2 units apart under protanopia, while this trio
+# clears every check of the palette validator (worst pair 16.2).
+SURFACE_COLORS = {
+    "cloud": "#c9c9c9",
+    "canopy": "#008300",
+    "straw": "#eda100",
+    "bare soil": "#4a3aa7",
+}
+
 # Markers of the cycle boundaries on the curve.
 CYCLE_START_COLOR = "#000000"
 CYCLE_END_COLOR = "#e34948"
@@ -218,6 +228,89 @@ def plot_seasons_timeseries(df, index, field_id, seasons, save_path=None):
         handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=8
     )
     fig.tight_layout(rect=(0, 0.10, 1, 1))
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=FIGURE_DPI)
+    return fig
+
+
+def plot_surface_timeseries(df, index, field_id, harvests=None, save_path=None):
+    """Plot one index per field, with every date coloured by surface state.
+
+    Green is a covered ground, yellow the straw a harvest left behind and
+    violet the bare soil of a renewal. Violet stands in for the intuitive
+    brown because brown and green are 3.2 units apart under protanopia, which
+    makes them the same colour for part of the audience.
+
+    The straw / bare soil split is a cut through a continuum. About half of
+    the bare dates sit between the pure endmembers of the spectral library,
+    so read the colours as a summary and `residue_cover_pct` as the measure.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Table with `field_id`, `date`, the index column and `surface`, from
+        `cane_cycle.residue.classify_surface`.
+    index : str
+        Name of the index to plot, e.g. "NDVI".
+    field_id : int
+        Field to plot.
+    harvests : pandas.DataFrame, optional
+        Harvests from `cane_cycle.harvest.detect_harvests`, marked as vertical
+        lines.
+    save_path : str or Path, optional
+        If given, the figure is saved to this file.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    for column in (index, "surface"):
+        if column not in df.columns:
+            raise ValueError(f"Missing column: {column}")
+
+    data = df[df["field_id"] == field_id].sort_values("date")
+    if data.empty:
+        raise ValueError(f"No data for field_id {field_id}")
+
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+
+    if harvests is not None and len(harvests) > 0:
+        for date in harvests.loc[harvests["field_id"] == field_id, "harvest_date"]:
+            ax.axvline(date, color="#b0b0b0", linewidth=1, linestyle="--", zorder=1)
+        # One proxy artist so the legend names the lines once.
+        ax.plot([], [], color="#b0b0b0", linewidth=1, linestyle="--", label="Harvest")
+
+    ax.plot(data["date"], data[index], color="#cccccc", linewidth=1, zorder=2)
+    for position, (surface, color) in enumerate(SURFACE_COLORS.items()):
+        marks = data[data["surface"] == surface]
+        if marks.empty:
+            continue
+        # Cloud is drawn first and smaller: it says where the surface could
+        # not be seen, without competing with the states that were measured.
+        ax.scatter(
+            marks["date"],
+            marks[index],
+            color=color,
+            s=10 if surface == "cloud" else 16,
+            zorder=3 + position,
+            label=surface,
+        )
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
+    ax.tick_params(axis="x", labelrotation=90, labelsize=8)
+    ax.set_xlabel("Date")
+    ax.set_ylabel(index)
+    ax.grid(True, color="#eeeeee", linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.set_title(f"Surface state | field_id: {field_id} | {index}")
+
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=9)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
 
     if save_path is not None:
         save_path = Path(save_path)
