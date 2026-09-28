@@ -25,9 +25,18 @@ A harvest date must meet two spectral conditions at the same time:
    0.536 in the library, straw and bare soil never exceed 0.212, so the
    default threshold of 0.30 sits inside that gap.
 
+There is no cloud filter before these conditions, because `swir_above_nir` is
+itself one: cloud reflects more in the NIR than in the SWIR, exactly like a
+live canopy, so it can never satisfy it. Measured on these two fields, none
+of the 191 cloud contaminated observations meets both conditions, and running
+the detection with and without a cloud filter gives the same dates. Cloud can
+therefore only hide a cut, never invent one - and a filter that removes bright
+images removes fresh straw with them. `filter_clouds` stays in the module for
+the later steps that read absolute reflectance, such as telling straw from
+bare soil, where cloud does corrupt the answer.
+
 A single image is enough. Clouds often leave only one clear view of a freshly
-cut field, and the two conditions above already exclude cloud, so demanding a
-second bare image would only push the date later.
+cut field, so demanding a second bare image would only push the date later.
 
 A season (safra) then runs from one harvest to the next. The first and last
 cycles of the record are open - they are bounded by the start and the end of
@@ -46,6 +55,8 @@ from cane_cycle.vegetation_indices import add_indices
 # sample of the library is positive (+0.047 to +0.324) and every straw sample
 # is negative (-0.147 to -0.163), because cloud reflects more in the NIR than
 # in the SWIR and dry straw does the opposite.
+# Used by the later steps that read absolute reflectance, not by the harvest
+# detection, which rejects cloud through `swir_above_nir` alone.
 CLOUD_B1_MAX = 0.10
 CLOUD_NDMI_MIN = 0.0
 
@@ -159,15 +170,15 @@ def detect_harvests(
     df,
     ndvi_max=HARVEST_NDVI_MAX,
     canopy_ndvi_min=CANOPY_NDVI_MIN,
-    cloud_b1_max=CLOUD_B1_MAX,
-    cloud_ndmi_min=CLOUD_NDMI_MIN,
 ):
     """Detect the harvest date of every crop cycle.
 
     A cycle is closed by the first date with no canopy that follows a date
     with a closed canopy, so a field can have two harvests in one year
     (soybean and maize) or none at all (renewal), and a single clear image is
-    enough to date the cut.
+    enough to date the cut. No cloud filter is applied: `swir_above_nir`
+    already rejects cloud, and filtering bright images would discard the fresh
+    straw that records the cut.
 
     Parameters
     ----------
@@ -178,10 +189,6 @@ def detect_harvests(
         NDVI at or below this marks a date with no live canopy.
     canopy_ndvi_min : float, default CANOPY_NDVI_MIN
         NDVI the crop must reach before a harvest can be recorded.
-    cloud_b1_max : float, default CLOUD_B1_MAX
-        B1 above which an observation is bright enough to be cloud.
-    cloud_ndmi_min : float, default CLOUD_NDMI_MIN
-        NDMI above which a bright observation is wet enough to be cloud.
 
     Returns
     -------
@@ -190,12 +197,9 @@ def detect_harvests(
         falls in), `harvest_date`, `ndvi_at_harvest` and `cycle_peak_ndvi`,
         the highest NDVI the crop reached during that cycle.
     """
-    missing = [i for i in ("NDVI", "NDMI") if i not in df.columns]
-    if missing:
-        df = add_indices(df, indices=missing)
+    if "NDVI" not in df.columns:
+        df = add_indices(df, indices=["NDVI"])
 
-    # Cloud always goes first.
-    df = filter_clouds(df, cloud_b1_max=cloud_b1_max, cloud_ndmi_min=cloud_ndmi_min)
     df = flag_harvest_conditions(df, ndvi_max=ndvi_max)
 
     harvests = []
