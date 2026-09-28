@@ -2,15 +2,28 @@
 
 Five phases run from one harvest to the next:
 
-===============  ==========================  ==============================
-Phase            Starts at                   What the crop is doing
-===============  ==========================  ==============================
-`post_harvest`   the harvest                 cut; nothing has emerged yet
-`sprouting`      the trough of the curve     shoots coming up under the straw
-`tillering`      the ground stops being bare shoots multiplying and covering
-`grand_growth`   the canopy closes           stalks elongating
-`maturation`     growth stops                sugar accumulating; then waiting
-===============  ==========================  ==============================
+===============  ===========================  =============================
+Phase            Starts at                    What the crop is doing
+===============  ===========================  =============================
+`post_harvest`   the harvest                  cut; shoots coming up under
+                                              the straw, not yet visible
+`tillering`      the ground stops being bare  shoots multiplying, covering
+`grand_growth`   the canopy closes            stalks elongating
+`maturation`     growth stops                 sugar accumulating, then
+                                              waiting for the mill
+===============  ===========================  =============================
+
+`post_harvest` is the stretch the surface classification calls straw or bare
+soil, the two merged into one. Sprouting happens inside it - the ratoon starts
+within days of the cut - but under the trash blanket, where the satellite
+cannot see it, so it gets no phase of its own.
+
+The end of that stretch is read *backwards*, as the last bare image before the
+canopy closes, not forwards as the first green one. In a normal cycle the two
+agree, since the bare period is one unbroken run. In a renewal they do not: the
+surface flickers for months while the field is worked, so reading forwards ends
+the phase at the first flicker and leaves a year of fallow inside `tillering`.
+Read backwards, the fallow lands in `post_harvest`, which is what it is.
 
 Only one of the eleven stages of the Brazilian scale (Barbosa, 2023) can be
 seen from orbit, and it is the one this uses: P3, "final do perfilhamento",
@@ -50,13 +63,8 @@ CLOSURE_THRESHOLD = 0.50
 # Index read at the top of the curve, where the first one saturates.
 GROWTH_INDEX = "EVI"
 
-# A canopy that takes longer than this to close did not belong to this cycle:
-# the field was in renewal and what finally closed was the crop planted after
-# it. Normal cycles on these fields close between days 61 and 203.
-MAX_CLOSURE_DAYS = 250
-
 # Phase names, in the order they occur.
-PHASES = ["post_harvest", "sprouting", "tillering", "grand_growth", "maturation"]
+PHASES = ["post_harvest", "tillering", "grand_growth", "maturation"]
 
 
 def phase_landmarks(
@@ -65,9 +73,8 @@ def phase_landmarks(
     shape_index=SHAPE_INDEX,
     growth_index=GROWTH_INDEX,
     closure_threshold=CLOSURE_THRESHOLD,
-    max_closure_days=MAX_CLOSURE_DAYS,
 ):
-    """Find the four dates that split each cycle into five phases.
+    """Find the three dates that split each cycle into four phases.
 
     Parameters
     ----------
@@ -81,16 +88,13 @@ def phase_landmarks(
         Index whose peak marks the end of growth.
     closure_threshold : float, default CLOSURE_THRESHOLD
         Value of `shape_index` at which the canopy counts as closed.
-    max_closure_days : int, default MAX_CLOSURE_DAYS
-        A cycle whose canopy takes longer than this to close is a renewal and
-        is left unclassified.
 
     Returns
     -------
     pandas.DataFrame
-        One row per cycle with `cut`, `trough`, `bare_end`, `closure`,
-        `cessation`, `next_cut`, and `classified`, which is False for a cycle
-        whose canopy never closed or whose landmarks came out of order.
+        One row per cycle with `cut`, `bare_end`, `closure`, `cessation`,
+        `next_cut`, and `classified`, which is False for a cycle whose canopy
+        never closed or whose landmarks came out of order.
     """
     shape = smooth_cycles_v2(df, seasons, index=shape_index)
     growth = smooth_cycles_v2(df, seasons, index=growth_index)
@@ -106,27 +110,18 @@ def phase_landmarks(
         days = curve["date"].to_numpy()
         values = curve[f"{shape_index}_smooth"].to_numpy()
 
-        # The bare period ends at the first of two consecutive non-bare images.
-        observations = df[
-            (df["field_id"] == cycle.field_id)
-            & df["date"].between(cycle.start_date, cycle.end_date)
-        ].sort_values("date").reset_index(drop=True)
-        bare = observations["surface"].isin([SURFACE_STRAW, SURFACE_SOIL]).to_numpy()
-        bare_end = next(
-            (
-                observations["date"][i]
-                for i in range(len(bare) - 1)
-                if not bare[i] and not bare[i + 1]
-            ),
-            None,
-        )
-
-        # The trough is the lowest point before the ground greens over.
-        limit = int(np.searchsorted(days, np.datetime64(bare_end))) if bare_end else 2
-        trough = days[int(np.argmin(values[: max(limit, 2)]))]
-
         reached = np.flatnonzero(values >= closure_threshold)
         closure = days[reached[0]] if len(reached) else None
+
+        # The bare period ends at the last bare image before the canopy closes.
+        bare = df[
+            (df["field_id"] == cycle.field_id)
+            & df["date"].between(cycle.start_date, cycle.end_date)
+            & df["surface"].isin([SURFACE_STRAW, SURFACE_SOIL])
+        ]
+        if closure is not None:
+            bare = bare[bare["date"] < closure]
+        bare_end = bare["date"].max() if len(bare) else None
 
         peak = growth[
             (growth["field_id"] == cycle.field_id) & (growth["season"] == cycle.season)
@@ -137,19 +132,15 @@ def phase_landmarks(
             else None
         )
 
-        marks = [cycle.start_date, trough, bare_end, closure, cessation, cycle.end_date]
+        marks = [cycle.start_date, bare_end, closure, cessation, cycle.end_date]
         classified = all(m is not None for m in marks) and all(
             pd.Timestamp(a) <= pd.Timestamp(b) for a, b in zip(marks, marks[1:])
         )
-        if classified:
-            closed_after = (pd.Timestamp(closure) - cycle.start_date).days
-            classified = closed_after <= max_closure_days
         rows.append(
             {
                 "field_id": cycle.field_id,
                 "season": cycle.season,
                 "cut": cycle.start_date,
-                "trough": trough,
                 "bare_end": bare_end,
                 "closure": closure,
                 "cessation": cessation,
@@ -166,7 +157,6 @@ def add_phenology(
     shape_index=SHAPE_INDEX,
     growth_index=GROWTH_INDEX,
     closure_threshold=CLOSURE_THRESHOLD,
-    max_closure_days=MAX_CLOSURE_DAYS,
 ):
     """Return the daily smoothed curve with the phase of every day.
 
@@ -178,11 +168,11 @@ def add_phenology(
     """
     curve = smooth_cycles_v2(df, seasons, index=shape_index)
     landmarks = phase_landmarks(
-        df, seasons, shape_index, growth_index, closure_threshold, max_closure_days
+        df, seasons, shape_index, growth_index, closure_threshold
     )
 
     curve = curve.merge(landmarks, on=["field_id", "season"], how="left")
-    boundaries = ["trough", "bare_end", "closure", "cessation"]
+    boundaries = ["bare_end", "closure", "cessation"]
     # Each day takes the last phase whose start it has reached.
     phase = pd.Series(PHASES[0], index=curve.index, dtype="object")
     for name, boundary in zip(PHASES[1:], boundaries):
@@ -194,7 +184,7 @@ def add_phenology(
 
 def phase_durations(landmarks):
     """Return the length of each phase, in days, for every classified cycle."""
-    marks = ["cut", "trough", "bare_end", "closure", "cessation", "next_cut"]
+    marks = ["cut", "bare_end", "closure", "cessation", "next_cut"]
     out = landmarks[landmarks["classified"]][["field_id", "season"]].copy()
     for name, start, end in zip(PHASES, marks, marks[1:]):
         out[name] = (

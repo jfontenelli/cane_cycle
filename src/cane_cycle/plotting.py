@@ -43,7 +43,6 @@ POINT_COLOR_CLEAR = "#6b6b6b"
 # unrelated categories.
 PHASE_COLORS = {
     "post_harvest": "#4a3aa7",
-    "sprouting": "#2a78d6",
     "tillering": "#1baf7a",
     "grand_growth": "#008300",
     "maturation": "#eda100",
