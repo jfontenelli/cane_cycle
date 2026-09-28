@@ -4,17 +4,19 @@ from pathlib import Path
 
 import pandas as pd
 
-# Columns that must exist in the input CSV.
-REQUIRED_COLUMNS = ["date", "field_id", "pixelTotal", "cloudyPerc"]
+# Non-band columns that must exist in the input CSV.
+REQUIRED_COLUMNS = ["date", "field_id", "pixelTotal"]
 
-# Sentinel-2 bands expected in the input CSV (B10 is not delivered in L2A).
-BAND_COLUMNS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+# Default Sentinel-2 bands expected in the input CSV. Passed as a function
+# parameter (not hardcoded) because different extracts carry different bands
+# (e.g. some include B8A and B9, others don't).
+DEFAULT_BAND_COLUMNS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B11", "B12"]
 
 # Date format of the `date` column in the raw file (e.g. 20200404).
 DATE_FORMAT = "%Y%m%d"
 
 
-def load_s2_csv(path, fields=None, drop_duplicates=True):
+def load_s2_csv(path, fields=None, drop_duplicates=True, band_columns=DEFAULT_BAND_COLUMNS):
     """Load a Sentinel-2 field time series CSV.
 
     Parameters
@@ -25,23 +27,31 @@ def load_s2_csv(path, fields=None, drop_duplicates=True):
         Field ids to keep. If None, all fields are kept.
     drop_duplicates : bool, default True
         If True, keep a single row per (field_id, date): the one with the
-        largest `pixelTotal` (most complete field coverage); ties are broken
-        by the lowest `cloudyPerc`.
+        largest `pixelTotal` (most complete field coverage).
+    band_columns : list of str, default DEFAULT_BAND_COLUMNS
+        Band columns that must be present in the CSV. Pass a different list
+        if the source file carries other bands (e.g. adding "B8A", "B9").
+        Rows with no valid pixels (`pixelTotal == 0`, all bands NaN) are
+        always dropped, since they carry no usable information.
 
     Returns
     -------
     pandas.DataFrame
         One row per (field_id, date), sorted by field_id and date, with
-        `date` as datetime64 and an extra `coverage` column
-        (pixelTotal / maximum pixelTotal of that field, from 0 to 1).
+        `date` as datetime64 and an extra `coverage_pct` column: the
+        percentage of valid pixels in the image, relative to the largest
+        `pixelTotal` observed for that field (100 = the most complete image).
     """
     df = pd.read_csv(Path(path))
 
-    missing = [c for c in REQUIRED_COLUMNS + BAND_COLUMNS if c not in df.columns]
+    missing = [c for c in REQUIRED_COLUMNS + list(band_columns) if c not in df.columns]
     if missing:
         raise ValueError(f"Missing columns in {path}: {missing}")
 
     df["date"] = pd.to_datetime(df["date"].astype(str), format=DATE_FORMAT)
+
+    # Drop rows with no valid pixels (empty observations, e.g. fully clouded scenes).
+    df = df[df["pixelTotal"] > 0].reset_index(drop=True)
 
     if fields is not None:
         df = df[df["field_id"].isin(fields)]
@@ -49,14 +59,14 @@ def load_s2_csv(path, fields=None, drop_duplicates=True):
     if drop_duplicates:
         # Best row first, then keep the first row of each (field_id, date).
         df = df.sort_values(
-            ["field_id", "date", "pixelTotal", "cloudyPerc"],
-            ascending=[True, True, False, True],
+            ["field_id", "date", "pixelTotal"],
+            ascending=[True, True, False],
         )
         df = df.drop_duplicates(subset=["field_id", "date"], keep="first")
 
-    # Fraction of the field covered by the image, relative to the best coverage.
+    # Percentage of valid pixels, relative to the field's best coverage.
     max_pixels = df.groupby("field_id")["pixelTotal"].transform("max")
-    df["coverage"] = df["pixelTotal"] / max_pixels
+    df["coverage_pct"] = 100 * df["pixelTotal"] / max_pixels
 
     df = df.sort_values(["field_id", "date"]).reset_index(drop=True)
     return df

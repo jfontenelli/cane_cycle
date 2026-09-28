@@ -13,9 +13,12 @@ Final goals:
 
 Work proceeds one stage at a time. Stage 1 = harvest date detection.
 
-Data: `data/raw/s2_fields_example.csv` — one row per (date, field), date as
-`YYYYMMDD`, `field_id`, `cloudyPerc`, `granuleID`, `pixelTotal`, and S2 L2A
-bands B2–B12 (B10 absent). Never modify files in `data/raw/`.
+Data: `data/raw/fields_example_s2.csv` — one row per (date, field), date as
+`YYYYMMDD`, `field_id`, `granuleID`, `pixelTotal`, and S2 L2A bands (B2–B9,
+B11, B12; not all bands present in every extract — band columns are passed
+as a function parameter). No cloud-cover column; `data/raw/spectral_library.csv`
+has reference reflectance samples (sugarcane, straw, bare soil, cloud) that
+may help distinguish these classes later. Never modify files in `data/raw/`.
 
 ## About the user
 
