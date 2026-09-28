@@ -46,8 +46,7 @@ def plot_index_timeseries(
         Draw a thin line connecting the observations.
     harvests : pandas.DataFrame, optional
         Candidate harvests from `cane_cycle.harvest.detect_harvests`. Each one
-        is marked with a red asterisk on the first index, at the first dry
-        image of the transition (the first observation that shows the cut).
+        is marked with a red asterisk on the first index, at its `harvest_date`.
     save_path : str or Path, optional
         If given, the figure is saved to this file.
 
@@ -85,7 +84,7 @@ def plot_index_timeseries(
         # Mark each candidate on the first index, at the first image showing
         # the cut, so the marker sits on a real observation.
         field_harvests = harvests[harvests["field_id"] == field_id]
-        marked = data[data["date"].isin(field_harvests["first_dry_date"])]
+        marked = data[data["date"].isin(field_harvests["harvest_date"])]
         ax_left.scatter(
             marked["date"],
             marked[indices[0]],
