@@ -34,6 +34,9 @@ SURFACE_COLORS = {
     "bare soil": "#4a3aa7",
 }
 
+# Colour of a clear observation when the smoothed curve carries the season.
+POINT_COLOR_CLEAR = "#6b6b6b"
+
 # Markers of the cycle boundaries on the curve.
 CYCLE_START_COLOR = "#000000"
 CYCLE_END_COLOR = "#e34948"
@@ -312,6 +315,96 @@ def plot_surface_timeseries(df, index, field_id, harvests=None, save_path=None):
     fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=9)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
 
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=FIGURE_DPI)
+    return fig
+
+
+def plot_smoothed_timeseries(
+    df, smoothed, index, field_id, harvests=None, save_path=None
+):
+    """Plot the observations against the smoothed curve and its derivative.
+
+    The top panel carries the observations and the curve fitted through them,
+    one colour per cycle. The bottom panel carries the first derivative, which
+    is what the phenological phases are read from: where it crosses zero the
+    crop stops growing, and its extremes are the fastest growth and the
+    fastest decline.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Observations, with `surface` so cloud can be drawn apart.
+    smoothed : pandas.DataFrame
+        Daily curve from `cane_cycle.smoothing.smooth_cycles`.
+    index : str
+        Index that was smoothed, e.g. "NDVI".
+    field_id : int
+        Field to plot.
+    harvests : pandas.DataFrame, optional
+        Harvest dates, drawn as vertical lines.
+    save_path : str or Path, optional
+        If given, the figure is saved to this file.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    data = df[df["field_id"] == field_id].sort_values("date")
+    curve = smoothed[smoothed["field_id"] == field_id].sort_values("date")
+    if data.empty or curve.empty:
+        raise ValueError(f"No data or no smoothed curve for field_id {field_id}")
+
+    fig, (ax_index, ax_slope) = plt.subplots(
+        2, 1, figsize=(FIGURE_SIZE[0], FIGURE_SIZE[1] * 1.35),
+        sharex=True, height_ratios=[2, 1],
+    )
+
+    if harvests is not None and len(harvests) > 0:
+        for date in harvests.loc[harvests["field_id"] == field_id, "harvest_date"]:
+            for ax in (ax_index, ax_slope):
+                ax.axvline(date, color="#b0b0b0", linewidth=1, linestyle="--", zorder=1)
+
+    clear = data[data["surface"] != "cloud"]
+    cloudy = data[data["surface"] == "cloud"]
+    ax_index.scatter(
+        cloudy["date"], cloudy[index], color=SURFACE_COLORS["cloud"], s=10,
+        zorder=2, label="cloud (weight 0)",
+    )
+    ax_index.scatter(
+        clear["date"], clear[index], color=POINT_COLOR_CLEAR, s=14,
+        zorder=3, label="observation",
+    )
+
+    for position, (season, segment) in enumerate(curve.groupby("season", sort=False)):
+        color = SEASON_COLORS[position % len(SEASON_COLORS)]
+        ax_index.plot(
+            segment["date"], segment[f"{index}_smooth"], color=color,
+            linewidth=1.8, zorder=4,
+        )
+        ax_slope.plot(
+            segment["date"], segment[f"{index}_slope"], color=color, linewidth=1.4
+        )
+
+    ax_index.plot([], [], color=SEASON_COLORS[0], linewidth=1.8, label="smoothed")
+    ax_index.set_ylabel(index)
+    ax_index.set_title(f"Smoothed {index} | field_id: {field_id}")
+    ax_index.legend(loc="upper right", frameon=False, fontsize=8, ncol=3)
+
+    ax_slope.axhline(0, color="#888888", linewidth=0.8)
+    ax_slope.set_ylabel(f"d{index}/dt")
+    ax_slope.set_xlabel("Date")
+
+    for ax in (ax_index, ax_slope):
+        ax.grid(True, color="#eeeeee", linewidth=0.6)
+        ax.set_axisbelow(True)
+    ax_slope.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+    ax_slope.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
+    ax_slope.tick_params(axis="x", labelrotation=90, labelsize=8)
+
+    fig.tight_layout()
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
