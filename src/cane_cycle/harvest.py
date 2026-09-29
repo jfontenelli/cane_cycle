@@ -7,7 +7,7 @@ A crop cycle is defined by the crop itself, never by the calendar:
         = one cycle, and its harvest is that first bare date.
 
 Grouping by calendar year (or by crop year) cannot do this. A field in
-renewal stays bare across any year boundary, so the first image of the new
+renovation stays bare across any year boundary, so the first image of the new
 year looks like a fresh harvest; and a soybean plus maize rotation has two
 complete cycles inside one year, of which a yearly grouping would only ever
 report the first. Requiring a closed canopy since the previous harvest solves
@@ -64,7 +64,7 @@ CLOUD_NDMI_MIN = 0.0
 HARVEST_NDVI_MAX = 0.30
 
 # NDVI a crop must reach for the field to count as having a canopy to harvest.
-# Weak ratoons in these fields peak at 0.546, while the bare renewal period
+# Weak ratoons in these fields peak at 0.546, while the bare renovation period
 # peaked at 0.452, so the threshold sits inside that gap.
 CANOPY_NDVI_MIN = 0.50
 
@@ -214,7 +214,7 @@ def detect_harvests(
 
     A cycle is closed by the first date with no canopy that follows a date
     with a closed canopy, so a field can have two harvests in one year
-    (soybean and maize) or none at all (renewal), and a single clear image is
+    (soybean and maize) or none at all (renovation), and a single clear image is
     enough to date the cut. No cloud filter is applied: `swir_above_nir`
     already rejects cloud, and filtering bright images would discard the fresh
     straw that records the cut.

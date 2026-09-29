@@ -8,7 +8,8 @@ Portfolio project: Sentinel-2 time series analysis of two sugarcane fields
 Final goals:
 - detect harvest (cut) dates;
 - split cycles and seasons (Centre-South season: April to March);
-- identify ratoon number (plant cane, ratoons, field renewal / reforma);
+- identify ratoon number (plant cane, ratoons, sugarcane field renovation /
+  reforma);
 - phenology and relationship with climate.
 
 Work proceeds one stage at a time. Stage 1 = harvest date detection.

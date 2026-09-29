@@ -7,7 +7,7 @@ Time series analysis of Sentinel-2 imagery over two sugarcane fields
 
 1. Detect harvest dates.
 2. Split the series into crop cycles and seasons (Centre-South season: April to March).
-3. Identify the ratoon number (plant cane, ratoons, field renewal).
+3. Identify the ratoon number (plant cane, ratoons, sugarcane field renovation).
 4. Describe phenology and its relationship with climate.
 
 ## Project layout

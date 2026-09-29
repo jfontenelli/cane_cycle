@@ -20,7 +20,7 @@ cannot see it, so it gets no phase of its own.
 
 The end of that stretch is read *backwards*, as the last bare image before the
 canopy closes, not forwards as the first green one. In a normal cycle the two
-agree, since the bare period is one unbroken run. In a renewal they do not: the
+agree, since the bare period is one unbroken run. In a renovation they do not: the
 surface flickers for months while the field is worked, so reading forwards ends
 the phase at the first flicker and leaves a year of fallow inside `tillering`.
 Read backwards, the fallow lands in `post_harvest`, which is what it is.
@@ -46,7 +46,7 @@ Two indices are used, each where it is trustworthy:
   would not.
 
 A cycle is left unclassified when it has no crop to have phenology. A field in
-renewal stays bare for a year, and forcing phases on it would report 447 days
+renovation stays bare for a year, and forcing phases on it would report 447 days
 of "sprouting".
 """
 

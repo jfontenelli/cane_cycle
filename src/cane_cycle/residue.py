@@ -1,10 +1,11 @@
 """Crop residue (straw) cover on the ground, and the surface state of a field.
 
 Follows the method Embrapa adopted for the Zarc Niveis de Manejo (DOCUMENTOS
-454, Embrapa Soja, 2023), which in turn follows Beeson et al. (2020) and
-Hively et al. (2018): NDTI is stretched linearly onto a 0-100% residue cover
-scale, with the two ends taken from the data itself rather than from field
-measurements.
+454, Embrapa Soja, 2023,
+https://www.infoteca.cnptia.embrapa.br/infoteca/handle/doc/1156802), which in
+turn follows Beeson et al. (2020) and Hively et al. (2018): NDTI is stretched
+linearly onto a 0-100% residue cover scale, with the two ends taken from the
+data itself rather than from field measurements.
 
     cover% = slope * NDTI + intercept
     slope     = (100 - 0) / (NDTI_max - NDTI_min)
@@ -49,7 +50,7 @@ ZARC_COVER_CLASSES = (45, 60, 75)
 # Cover at or above which the surface counts as straw rather than bare soil.
 # This is the lowest Zarc class boundary, and on these two fields it falls in
 # the gap between the normal harvests (54.6% to 69.9%) and the two that open a
-# renewal (27.2% and 35.7%).
+# renovation (27.2% and 35.7%).
 STRAW_COVER_MIN = 45.0
 
 # Days after a harvest over which the residue cover is summarised. Not from

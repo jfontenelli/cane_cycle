@@ -53,6 +53,28 @@ PHASE_UNCLASSIFIED_COLOR = "#b0b0b0"
 CYCLE_START_COLOR = "#000000"
 CYCLE_END_COLOR = "#e34948"
 
+# Style of the cut lines on the cut plot: an ordinary cut is grey and quiet,
+# the cut that opens a renovation is heavy, because it is the event that
+# restarts the count.
+CUT_COLOR = "#909090"
+# Black, not red: red is the eighth season hue, and in field 1460 the
+# renovation falls exactly on the cycle that carries it.
+FIELD_RENOVATION_CUT_COLOR = "#000000"
+
+# Written over a cycle whose place in the sequence of cuts is unknown.
+UNKNOWN_STAGE = "undefined"
+
+# Headroom added above the series, as a fraction of its range, to leave room
+# for the labels written over each cycle.
+LABEL_HEADROOM = 0.45
+
+# Gap, in points, between the cut line and the stage written beside it.
+STAGE_LABEL_OFFSET_PT = 4
+
+# Columns of the legend of the plots that name every season, which carry one
+# entry per season plus a few style entries.
+SEASON_LEGEND_COLUMNS = 5
+
 # Y-axis label for each index group.
 GROUP_LABELS = {
     "vegetation": "Vegetation index",
@@ -255,7 +277,7 @@ def plot_surface_timeseries(df, index, field_id, harvests=None, save_path=None):
     """Plot one index per field, with every date coloured by surface state.
 
     Green is a covered ground, yellow the straw a harvest left behind and
-    violet the bare soil of a renewal. Violet stands in for the intuitive
+    violet the bare soil of a renovation. Violet stands in for the intuitive
     brown because brown and green are 3.2 units apart under protanopia, which
     makes them the same colour for part of the audience.
 
@@ -334,13 +356,134 @@ def plot_surface_timeseries(df, index, field_id, harvests=None, save_path=None):
     return fig
 
 
+def plot_cuts_timeseries(df, index, field_id, cycles, harvests=None, save_path=None):
+    """Plot the raw series with the cut each cycle carries written over it.
+
+    One colour per cycle, named in the legend by its season, and beside the cut
+    that opened each cycle the stage of the crop it grew: the plant cane, a
+    numbered ratoon, or `undefined` where the count is unknown because the
+    record starts in the middle of the field's history.
+
+    The cuts are drawn as vertical lines, and the one that opened a renovation
+    is drawn apart: it is the last cut of the old stand, the tillage that follows
+    it is what the residue cover detected, and the cycle after it is the plant
+    cane. Nothing here is smoothed - the cuts are read on the observations
+    themselves, as they were detected.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Table with `field_id`, `date` and the index column.
+    index : str
+        Name of the index to plot, e.g. "NDVI".
+    field_id : int
+        Field to plot.
+    cycles : pandas.DataFrame
+        Cycles with `stage` and `ratoon_number`, from
+        `cane_cycle.field_renovation.count_cuts`.
+    harvests : pandas.DataFrame, optional
+        Harvest dates. When given, only these get a cut line, which keeps the
+        limits of the record from being drawn as if they were cuts.
+    save_path : str or Path, optional
+        If given, the figure is saved to this file.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    if index not in df.columns:
+        raise ValueError(f"Index not computed yet: {index}. Run add_indices first.")
+
+    data = df[df["field_id"] == field_id].sort_values("date")
+    field_cycles = cycles[cycles["field_id"] == field_id].sort_values("start_date")
+    if data.empty or field_cycles.empty:
+        raise ValueError(f"No data or no cycle for field_id {field_id}")
+
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+
+    cuts = []
+    for position, cycle in enumerate(field_cycles.itertuples()):
+        color = SEASON_COLORS[position % len(SEASON_COLORS)]
+        # Both boundaries are included, so consecutive cycles share a point
+        # and the curve stays continuous across the colour change.
+        segment = data[data["date"].between(cycle.start_date, cycle.end_date)]
+        ax.plot(
+            segment["date"], segment[index], color=color, linewidth=1.5, zorder=2,
+            label=str(cycle.season),
+        )
+        ax.scatter(
+            segment["date"], segment[index], color=color, s=12, alpha=0.5, zorder=3
+        )
+        # A renovation cycle is the plant cane, so the cut that opened it is the
+        # renovation cut.
+        is_field_renovation = pd.notna(cycle.ratoon_number) and cycle.ratoon_number == 0
+        cuts.append((cycle.start_date, is_field_renovation))
+        cuts.append((cycle.end_date, False))
+
+        # The stage is written against the cut that opened the cycle, because
+        # that cut is what the number counts: the season itself is read from
+        # the colour and the legend, and is not repeated here.
+        stage = cycle.stage if isinstance(cycle.stage, str) else UNKNOWN_STAGE
+        ax.annotate(
+            stage,
+            # `annotate` does not convert dates itself, unlike `text`.
+            xy=(mdates.date2num(cycle.start_date), 0.98),
+            xycoords=ax.get_xaxis_transform(),
+            xytext=(STAGE_LABEL_OFFSET_PT, 0), textcoords="offset points",
+            rotation=90, ha="left", va="top", fontsize=8, color=color, zorder=4,
+        )
+
+    if harvests is not None:
+        dates = set(harvests.loc[harvests["field_id"] == field_id, "harvest_date"])
+        cuts = [(date, renovation) for date, renovation in cuts if date in dates]
+
+    for date, is_field_renovation in cuts:
+        ax.axvline(
+            date,
+            color=FIELD_RENOVATION_CUT_COLOR if is_field_renovation else CUT_COLOR,
+            linewidth=1.8 if is_field_renovation else 1.0,
+            linestyle="--", zorder=1,
+        )
+    ax.plot([], [], color=CUT_COLOR, linewidth=1.0, linestyle="--", label="cut")
+    ax.plot(
+        [], [], color=FIELD_RENOVATION_CUT_COLOR, linewidth=1.8, linestyle="--",
+        label="cut that opened a renovation",
+    )
+
+    # Room for the labels, which are written along the top of the axes.
+    bottom, top = ax.get_ylim()
+    ax.set_ylim(bottom, top + LABEL_HEADROOM * (top - bottom))
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
+    ax.tick_params(axis="x", labelrotation=90, labelsize=8)
+    ax.set_xlabel("Date")
+    ax.set_ylabel(index)
+    ax.set_title(f"Cuts and ratoon number | field_id: {field_id} | {index}")
+    ax.grid(True, color="#eeeeee", linewidth=0.6)
+    ax.set_axisbelow(True)
+
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(
+        handles, labels, loc="lower center", ncol=SEASON_LEGEND_COLUMNS,
+        frameon=False, fontsize=8,
+    )
+    fig.tight_layout(rect=(0, 0.14, 1, 1))
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=FIGURE_DPI)
+    return fig
+
+
 def plot_smoothed_timeseries(
     df, smoothed, index, field_id, harvests=None, save_path=None
 ):
     """Plot the observations against the smoothed curve and its derivative.
 
     The top panel carries the observations and the curve fitted through them,
-    one colour per cycle. The bottom panel carries the first derivative, which
+    one colour per cycle, named in the legend by its season. The bottom panel carries the first derivative, which
     is what the phenological phases are read from: where it crosses zero the
     crop stops growing, and its extremes are the fastest growth and the
     fastest decline.
@@ -392,18 +535,18 @@ def plot_smoothed_timeseries(
 
     for position, (season, segment) in enumerate(curve.groupby("season", sort=False)):
         color = SEASON_COLORS[position % len(SEASON_COLORS)]
+        # The curve of each season carries its own name, so the legend below
+        # the figure reads as the key to the colours of both panels.
         ax_index.plot(
             segment["date"], segment[f"{index}_smooth"], color=color,
-            linewidth=1.8, zorder=4,
+            linewidth=1.8, zorder=4, label=str(season),
         )
         ax_slope.plot(
             segment["date"], segment[f"{index}_slope"], color=color, linewidth=1.4
         )
 
-    ax_index.plot([], [], color=SEASON_COLORS[0], linewidth=1.8, label="smoothed")
     ax_index.set_ylabel(index)
     ax_index.set_title(f"Smoothed {index} | field_id: {field_id}")
-    ax_index.legend(loc="upper right", frameon=False, fontsize=8, ncol=3)
 
     ax_slope.axhline(0, color="#888888", linewidth=0.8)
     ax_slope.set_ylabel(f"d{index}/dt")
@@ -416,7 +559,16 @@ def plot_smoothed_timeseries(
     ax_slope.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
     ax_slope.tick_params(axis="x", labelrotation=90, labelsize=8)
 
-    fig.tight_layout()
+    # The two point entries are drawn first but read last: the seasons are the
+    # key to the colours, the points are a footnote to them.
+    handles, labels = ax_index.get_legend_handles_labels()
+    order = list(range(2, len(handles))) + [1, 0]
+    fig.legend(
+        [handles[i] for i in order], [labels[i] for i in order],
+        loc="lower center", ncol=SEASON_LEGEND_COLUMNS, frameon=False, fontsize=8,
+    )
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
+
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -429,7 +581,7 @@ def plot_phenology_timeseries(df, curve, index, field_id, save_path=None):
 
     The colours run cold to warm in the order the phases occur, so the cycle
     reads left to right as a progression. A cycle the phases could not be
-    read from - a field in renewal has no crop to have phenology - is drawn
+    read from - a field in renovation has no crop to have phenology - is drawn
     in grey.
 
     Parameters
