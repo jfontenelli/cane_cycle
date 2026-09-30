@@ -39,15 +39,20 @@ SURFACE_COLORS = {
 POINT_COLOR_CLEAR = "#6b6b6b"
 
 # One colour per phenological phase, running cold to warm in the order the
-# phases occur, so the cycle reads as a progression rather than as four
+# phases occur, so the cycle reads as a progression rather than as three
 # unrelated categories.
 PHASE_COLORS = {
     "post_harvest": "#4a3aa7",
-    "tillering": "#1baf7a",
-    "grand_growth": "#008300",
+    "growth": "#008300",
     "maturation": "#eda100",
 }
 PHASE_UNCLASSIFIED_COLOR = "#b0b0b0"
+
+# The curve the phase boundary is read from is drawn behind the one the phases
+# are painted on, with its peak marked, so the landmark can be checked against
+# the evidence it came from instead of being taken on trust.
+GROWTH_CURVE_COLOR = "#8c8c8c"
+GROWTH_PEAK_COLOR = "#000000"
 
 # Markers of the cycle boundaries on the curve.
 CYCLE_START_COLOR = "#000000"
@@ -480,13 +485,10 @@ def plot_cuts_timeseries(df, index, field_id, cycles, harvests=None, save_path=N
 def plot_smoothed_timeseries(
     df, smoothed, index, field_id, harvests=None, save_path=None
 ):
-    """Plot the observations against the smoothed curve and its derivative.
+    """Plot the observations against the smoothed curve fitted through them.
 
-    The top panel carries the observations and the curve fitted through them,
-    one colour per cycle, named in the legend by its season. The bottom panel carries the first derivative, which
-    is what the phenological phases are read from: where it crosses zero the
-    crop stops growing, and its extremes are the fastest growth and the
-    fastest decline.
+    One colour per cycle, named in the legend by its season, so the fit can be
+    checked against the points it came from before the phases are read off it.
 
     Parameters
     ----------
@@ -512,15 +514,13 @@ def plot_smoothed_timeseries(
     if data.empty or curve.empty:
         raise ValueError(f"No data or no smoothed curve for field_id {field_id}")
 
-    fig, (ax_index, ax_slope) = plt.subplots(
-        2, 1, figsize=(FIGURE_SIZE[0], FIGURE_SIZE[1] * 1.35),
-        sharex=True, height_ratios=[2, 1],
-    )
+    fig, ax_index = plt.subplots(figsize=FIGURE_SIZE)
 
     if harvests is not None and len(harvests) > 0:
         for date in harvests.loc[harvests["field_id"] == field_id, "harvest_date"]:
-            for ax in (ax_index, ax_slope):
-                ax.axvline(date, color="#b0b0b0", linewidth=1, linestyle="--", zorder=1)
+            ax_index.axvline(
+                date, color="#b0b0b0", linewidth=1, linestyle="--", zorder=1
+            )
 
     clear = data[data["surface"] != "cloud"]
     cloudy = data[data["surface"] == "cloud"]
@@ -541,23 +541,16 @@ def plot_smoothed_timeseries(
             segment["date"], segment[f"{index}_smooth"], color=color,
             linewidth=1.8, zorder=4, label=str(season),
         )
-        ax_slope.plot(
-            segment["date"], segment[f"{index}_slope"], color=color, linewidth=1.4
-        )
 
     ax_index.set_ylabel(index)
+    ax_index.set_xlabel("Date")
     ax_index.set_title(f"Smoothed {index} | field_id: {field_id}")
 
-    ax_slope.axhline(0, color="#888888", linewidth=0.8)
-    ax_slope.set_ylabel(f"d{index}/dt")
-    ax_slope.set_xlabel("Date")
-
-    for ax in (ax_index, ax_slope):
-        ax.grid(True, color="#eeeeee", linewidth=0.6)
-        ax.set_axisbelow(True)
-    ax_slope.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
-    ax_slope.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
-    ax_slope.tick_params(axis="x", labelrotation=90, labelsize=8)
+    ax_index.grid(True, color="#eeeeee", linewidth=0.6)
+    ax_index.set_axisbelow(True)
+    ax_index.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+    ax_index.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))
+    ax_index.tick_params(axis="x", labelrotation=90, labelsize=8)
 
     # The two point entries are drawn first but read last: the seasons are the
     # key to the colours, the points are a footnote to them.
@@ -576,13 +569,22 @@ def plot_smoothed_timeseries(
     return fig
 
 
-def plot_phenology_timeseries(df, curve, index, field_id, save_path=None):
+def plot_phenology_timeseries(
+    df, curve, index, field_id,
+    growth=None, growth_index="EVI", save_path=None,
+):
     """Plot the smoothed curve with every day coloured by phenological phase.
 
     The colours run cold to warm in the order the phases occur, so the cycle
     reads left to right as a progression. A cycle the phases could not be
     read from - a field in renovation has no crop to have phenology - is drawn
     in grey.
+
+    The boundary between growth and maturation is the peak of `growth_index`,
+    not of the index drawn. Given `growth`, that curve is drawn thin behind the
+    coloured one and its peak marked, so the reader can see where the boundary
+    came from: on a saturated plateau the two peaks can sit weeks apart, and
+    without this the colour changes while the drawn curve is still climbing.
 
     Parameters
     ----------
@@ -595,6 +597,11 @@ def plot_phenology_timeseries(df, curve, index, field_id, save_path=None):
         Index that was smoothed, e.g. "NDVI".
     field_id : int
         Field to plot.
+    growth : pandas.DataFrame, optional
+        Daily curve of `growth_index`, from `cane_cycle.smoothing`. Drawn
+        behind, with the peak that splits each cycle marked.
+    growth_index : str, default "EVI"
+        Index `growth` carries.
     save_path : str or Path, optional
         If given, the figure is saved to this file.
 
@@ -610,6 +617,21 @@ def plot_phenology_timeseries(df, curve, index, field_id, save_path=None):
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     clear = points[points["surface"] != "cloud"]
     ax.scatter(clear["date"], clear[index], color="#c9c9c9", s=10, zorder=2)
+
+    peaks = None
+    if growth is not None:
+        trace = growth[growth["field_id"] == field_id].sort_values("date")
+        growth_column = f"{growth_index}_smooth"
+        for _, cycle in trace.groupby("season", sort=False):
+            ax.plot(
+                cycle["date"], cycle[growth_column],
+                color=GROWTH_CURVE_COLOR, linewidth=0.9, zorder=1,
+            )
+        peaks = trace.loc[trace.groupby("season")[growth_column].idxmax()]
+        ax.scatter(
+            peaks["date"], peaks[growth_column],
+            color=GROWTH_PEAK_COLOR, s=22, zorder=5,
+        )
 
     # One segment per run of the same phase, each carrying the first day of
     # the next run so the curve never breaks between colours.
@@ -630,6 +652,12 @@ def plot_phenology_timeseries(df, curve, index, field_id, save_path=None):
         ax.plot([], [], color=color, linewidth=2, label=phase)
     if line["phase"].isna().any():
         ax.plot([], [], color=PHASE_UNCLASSIFIED_COLOR, linewidth=2, label="unclassified")
+    if peaks is not None:
+        ax.plot([], [], color=GROWTH_CURVE_COLOR, linewidth=0.9, label=growth_index)
+        ax.scatter(
+            [], [], color=GROWTH_PEAK_COLOR, s=22,
+            label=f"{growth_index} peak (phase boundary)",
+        )
 
     ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%Y"))

@@ -53,10 +53,10 @@ ZARC_COVER_CLASSES = (45, 60, 75)
 # renovation (27.2% and 35.7%).
 STRAW_COVER_MIN = 45.0
 
-# Days after a harvest over which the residue cover is summarised. Not from
-# the Embrapa protocol, which reads a single image at sowing time; 30 days
-# keeps most of the contrast while leaving at least four images per harvest.
-RESIDUE_WINDOW_DAYS = 30
+# Fewest bare images a cycle needs before its cover is allowed to decide
+# anything. A cycle the record caught with the canopy already closed carries
+# almost none, and a median over one or two images is not a measurement.
+CYCLE_MIN_BARE_IMAGES = 5
 
 # Labels of the `surface` column.
 SURFACE_CANOPY = "canopy"
@@ -170,46 +170,59 @@ def classify_surface(
     return df
 
 
-def summarize_residue(df, harvests, window_days=RESIDUE_WINDOW_DAYS):
-    """Summarise the residue left on the ground by each harvest.
+def summarize_cycle_residue(df, seasons, min_images=CYCLE_MIN_BARE_IMAGES):
+    """Summarise the cover of the ground over the bare stretch of each cycle.
+
+    The window is the cycle's own bare period, not a fixed span after the cut.
+    A fixed window stops before the tillage a renovation performs over the
+    months that follow, and cannot be asked at all of a cycle whose opening cut
+    falls outside the record. Reading every bare image the cycle holds makes
+    the window as long as the ground stays uncovered, and needs no cut to
+    anchor it.
 
     Parameters
     ----------
     df : pandas.DataFrame
-        Table with `residue_cover_pct`, from `add_residue_cover`.
-    harvests : pandas.DataFrame
-        Output of `cane_cycle.harvest.detect_harvests`.
-    window_days : int, default RESIDUE_WINDOW_DAYS
-        Days after the harvest over which the cover is summarised.
+        Table with `surface` and `residue_cover_pct`, from `classify_surface`.
+    seasons : pandas.DataFrame
+        Cycles from `cane_cycle.harvest.build_seasons`.
+    min_images : int, default CYCLE_MIN_BARE_IMAGES
+        Below this many bare images the median is still reported, but
+        `enough_images` marks it as too thin to decide on.
 
     Returns
     -------
     pandas.DataFrame
-        One row per harvest with `n_images`, the median `residue_cover_pct`
-        over the window, and the `zarc_class` that median falls in.
+        One row per cycle with `n_images`, `bare_soil_pct` (the share of those
+        images that were bare soil rather than straw), the median
+        `residue_cover_pct` over them, its `zarc_class` and `enough_images`.
     """
     if "residue_cover_pct" not in df.columns:
         df = add_residue_cover(df)
 
     rows = []
-    for harvest in harvests.itertuples():
-        window = df[
-            (df["field_id"] == harvest.field_id)
-            & df["date"].between(
-                harvest.harvest_date,
-                harvest.harvest_date + pd.Timedelta(days=window_days),
-            )
+    for cycle in seasons.itertuples():
+        bare = df[
+            (df["field_id"] == cycle.field_id)
+            & df["date"].between(cycle.start_date, cycle.end_date)
+            & df["surface"].isin([SURFACE_STRAW, SURFACE_SOIL])
             & df["residue_cover_pct"].notna()
         ]
-        cover = window["residue_cover_pct"].median()
+        cover = bare["residue_cover_pct"].median()
         rows.append(
             {
-                "field_id": harvest.field_id,
-                "season": harvest.season,
-                "harvest_date": harvest.harvest_date,
-                "n_images": len(window),
+                "field_id": cycle.field_id,
+                "season": cycle.season,
+                "start_date": cycle.start_date,
+                "n_images": len(bare),
+                "bare_soil_pct": (
+                    100 * (bare["surface"] == SURFACE_SOIL).mean()
+                    if len(bare)
+                    else float("nan")
+                ),
                 "residue_cover_pct": cover,
                 "zarc_class": _zarc_class(cover),
+                "enough_images": len(bare) >= min_images,
             }
         )
     return pd.DataFrame(rows)

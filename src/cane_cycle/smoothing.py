@@ -1,8 +1,9 @@
 """Whittaker smoothing of an index series, on a daily grid, cycle by cycle.
 
-The phenological phases are defined by where the curve turns, so they need a
-derivative, and the derivative of a raw satellite series is noise. This module
-produces the smooth daily curve the phases are read from.
+The phenological phases are read off the shape of the curve - where it peaks,
+and how long it stays down after a cut - and the shape of a raw satellite
+series is noise. This module produces the smooth daily curve they are read
+from.
 
 The smoother is the Whittaker penalised least squares (Eilers, 2003): it finds
 the curve `z` that minimises
@@ -11,10 +12,10 @@ the curve `z` that minimises
 
 The first term keeps the curve near the observations, weighted by `w`; the
 second penalises roughness. `lambda` sets the balance. Measured on these two
-fields, lambda = 10 leaves the first derivative changing sign up to 38 times
-per cycle, which is unusable, while lambda = 10000 doubles the fitting error;
-1000 sits between, with a fitting error of 0.02 to 0.04 (the order of the
-sensor noise) and 3 to 12 inflections per cycle.
+fields, lambda = 10 leaves the curve turning up to 38 times per cycle, which
+is unusable, while lambda = 10000 doubles the fitting error; 1000 sits
+between, with a fitting error of 0.02 to 0.04 (the order of the sensor noise)
+and 3 to 12 turns per cycle.
 
 Two choices matter as much as lambda:
 
@@ -29,7 +30,8 @@ Two choices matter as much as lambda:
 
 Whittaker was chosen over Savitzky-Golay because it takes the irregular
 sampling natively, through the weights, and because it penalises exactly the
-second difference, which is what makes the derivative usable.
+second difference, which is what keeps a single, well placed peak instead of
+a row of noise peaks near the top.
 """
 
 import numpy as np
@@ -119,9 +121,8 @@ def smooth_cycles(
     -------
     pandas.DataFrame
         One row per day of each cycle, with `field_id`, `season`, `date`,
-        `<index>_smooth`, `<index>_slope` (first derivative, per day),
-        `<index>_curvature` (second derivative) and `observed`, which marks
-        the days that had a real image behind them.
+        `<index>_smooth` and `observed`, which marks the days that had a real
+        image behind them.
     """
     return _smooth(
         df, seasons, index, lam, cloud_weight, min_observations,
@@ -130,10 +131,8 @@ def smooth_cycles(
 
 
 def _smooth(df, seasons, index, lam, cloud_weight, min_observations, fit):
-    """Run `fit` over every cycle and return the daily curve and derivatives."""
+    """Run `fit` over every cycle and return the daily curve."""
     smooth_col = f"{index}_smooth"
-    slope_col = f"{index}_slope"
-    curvature_col = f"{index}_curvature"
 
     frames = []
     for cycle in seasons.itertuples():
@@ -159,7 +158,6 @@ def _smooth(df, seasons, index, lam, cloud_weight, min_observations, fit):
             weights.iloc[observed_days[-1]] *= BOUNDARY_ANCHOR
 
         smooth = fit(np.nan_to_num(values.to_numpy()), weights.to_numpy())
-        slope = np.gradient(smooth)
         frames.append(
             pd.DataFrame(
                 {
@@ -167,8 +165,6 @@ def _smooth(df, seasons, index, lam, cloud_weight, min_observations, fit):
                     "season": cycle.season,
                     "date": days,
                     smooth_col: smooth,
-                    slope_col: slope,
-                    curvature_col: np.gradient(slope),
                     "observed": weights.to_numpy() > 0,
                 }
             )
@@ -176,10 +172,7 @@ def _smooth(df, seasons, index, lam, cloud_weight, min_observations, fit):
 
     if not frames:
         return pd.DataFrame(
-            columns=[
-                "field_id", "season", "date",
-                smooth_col, slope_col, curvature_col, "observed",
-            ]
+            columns=["field_id", "season", "date", smooth_col, "observed"]
         )
     return pd.concat(frames, ignore_index=True)
 
